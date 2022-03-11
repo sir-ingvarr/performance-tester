@@ -5,8 +5,10 @@ const makeRequest = (requestOptions, protocol, needResponse = true) => new Promi
     const module = protocol === 0 ? http : https;
     const req = module.request(requestOptions, res => {
         const { statusCode: status } = res;
-
-        if(!needResponse) return resolve({ status });
+        if(!needResponse) {
+            res.destroy();
+            return resolve({ status });
+        }
 
         let response = Buffer.from('');
         res.on('data', data => {

@@ -1,40 +1,7 @@
+const url = require('url');
 const {makeRequest} = require("./requester");
 const {benchmarkPromise} = require("./benchmark");
-const yargs = require('yargs');
-const {hideBin} = require("yargs/helpers");
-const url = require('url');
-
-const argv = yargs(hideBin(process.argv))
-    .options({
-        u: {
-            alias: 'url',
-            demandOption: true,
-            default: 'http://localhost',
-            describe: 'url to query',
-            type: 'string'
-        },
-        p: {
-            alias: 'port',
-            describe: 'port',
-            type: 'number'
-        },
-        t: {
-            alias: 'time',
-            demandOption: true,
-            default: '60',
-            describe: 'time in seconds to send requests',
-            type: 'number'
-        },
-        c: {
-            alias: 'concurrent',
-            demandOption: true,
-            default: '1000',
-            describe: 'number of concurrent requests',
-            type: 'number'
-        }
-    })
-    .help()
-    .argv
+const argv = require('./args');
 
 const address = argv.u;
 const portArg = argv.p;
@@ -78,21 +45,20 @@ const options = {
 };
 
 const start = Date.now();
-const statuses = {};
+const statuses = {last_response_time: 'waiting'};
 let counter = 0;
 
 function bombard() {
     try {
         counter++;
-        process.stdout.write(`\r TIME: ${(Date.now() - start) / 1000} s, requests: ${set.size}`);
         const promise = benchmarkPromise(makeRequest, options, protocol, false);
         set.add(promise);
-        promise.then(({data}) => {
+        promise.then(({data, time}) => {
             const {status} = data;
             const key = status || data.code;
             statuses[key] = statuses[key] ? statuses[key] += 1 : 1;
+            statuses.last_response_time = time + 'ms';
             set.delete(promise);
-            process.stdout.write(`\r TIME: ${(Date.now() - start) / 1000} s, requests: ${set.size}`);
             if ((Date.now() - start) / 1000 < workTime) return bombard();
             if (set.size === 0) end();
         });
@@ -104,11 +70,25 @@ function bombard() {
 }
 
 function end() {
+    clearInterval(interval);
+    logProgress();
+    delete statuses.last_response_time;
     console.log('\nended');
+    console.log('request sent:', counter);
     console.log(statuses);
 }
 
-console.log('Starting to test', urlParams.hostname, 'on port', port, 'during', workTime, 's. Protocol:', urlParams.protocol);
+console.log(`Starting to test ${urlParams.protocol}//${urlParams.hostname}:${port}${urlParams.path} during ${workTime} s.`);
+
+const logProgress = () => {
+    process.stdout.clearLine();
+    process.stdout.cursorTo(0);
+    process.stdout.write(
+        `Time: ${(Date.now() - start) / 1000} s, pending requests: ${set.size}, latest response time: ${statuses.last_response_time}`
+    );
+}
+
+const interval = setInterval(logProgress, 500);
 
 bombard();
 
