@@ -7,6 +7,7 @@ const address = argv.u;
 const portArg = argv.p;
 const concurrent = argv.c;
 const workTime = argv.t;
+const timeout = argv.tm * 1000;
 
 
 const urlParams = url.parse(address);
@@ -41,7 +42,8 @@ const options = {
     hostname: urlParams.hostname,
     port,
     path: urlParams.path,
-    method: 'GET'
+    method: 'GET',
+    timeout
 };
 
 const start = Date.now();
@@ -49,24 +51,19 @@ const statuses = {last_response_time: 'waiting'};
 let counter = 0;
 
 function bombard() {
-    try {
-        counter++;
-        const promise = benchmarkPromise(makeRequest, options, protocol, false);
-        set.add(promise);
-        promise.then(({data, time}) => {
-            const {status} = data;
-            const key = status || data.code;
-            statuses[key] = statuses[key] ? statuses[key] += 1 : 1;
-            statuses.last_response_time = time + 'ms';
-            set.delete(promise);
-            if ((Date.now() - start) / 1000 < workTime) return bombard();
-            if (set.size === 0) end();
-        });
-        if (set.size < concurrent && (Date.now() - start) / 1000 < workTime) bombard();
-    } catch (e) {
-        console.log('request sent:', counter);
-        console.log(e);
-    }
+    counter++;
+    const promise = benchmarkPromise(makeRequest, options, protocol, timeout, false);
+    set.add(promise);
+    promise.then(({data, time}) => {
+        const {status} = data;
+        const key = status || data.code;
+        statuses[key] = statuses[key] ? statuses[key] += 1 : 1;
+        statuses.last_response_time = time + 'ms';
+        set.delete(promise);
+        if ((Date.now() - start) / 1000 < workTime) return bombard();
+        if (set.size === 0) end();
+    })
+    if (set.size < concurrent && (Date.now() - start) / 1000 < workTime) bombard();
 }
 
 function end() {
@@ -76,6 +73,7 @@ function end() {
     console.log('\nended');
     console.log('request sent:', counter);
     console.log(statuses);
+    process.exit(0);
 }
 
 console.log(`Starting to test ${urlParams.protocol}//${urlParams.hostname}:${port}${urlParams.path} during ${workTime} s.`);
@@ -87,6 +85,9 @@ const logProgress = () => {
         `Time: ${(Date.now() - start) / 1000} s, pending requests: ${set.size}, latest response time: ${statuses.last_response_time}`
     );
 }
+
+process.on('SIGINT', end);
+process.on('SIGTERM', end);
 
 const interval = setInterval(logProgress, 500);
 

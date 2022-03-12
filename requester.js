@@ -1,12 +1,12 @@
 const https = require('https');
 const http = require('http');
 
-const makeRequest = (requestOptions, protocol, needResponse = true) => new Promise((resolve, reject) => {
+const makeRequest = (requestOptions, protocol, timeout, needResponse = true) => new Promise((resolve, reject) => {
     const module = protocol === 0 ? http : https;
     const req = module.request(requestOptions, res => {
         const { statusCode: status } = res;
         if(!needResponse) {
-            res.destroy();
+            req.destroy();
             return resolve({ status });
         }
 
@@ -19,6 +19,8 @@ const makeRequest = (requestOptions, protocol, needResponse = true) => new Promi
             resolve({ status, response: response.toString('utf8') });
         });
     })
+
+    req.setTimeout(timeout, () => reject({code: 'ETIMEDOUT'}));
 
     req.on('error', e => {
         reject(e);
