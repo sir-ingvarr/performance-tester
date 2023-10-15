@@ -1,95 +1,105 @@
+#! node
 const url = require('url');
-const {makeRequest} = require("./requester");
-const {benchmarkPromise} = require("./benchmark");
+const {Worker} = require("worker_threads");
 const argv = require('./args');
 
-const address = argv.u;
-const portArg = argv.p;
-const concurrent = argv.c;
-const workTime = argv.t;
-const timeout = argv.tm * 1000;
-
-
-const urlParams = url.parse(address);
-
-const urlProtocol = urlParams.protocol;
-
-if(!urlProtocol) throw "protocol is required";
-
-let port;
-let protocol;
-switch(urlProtocol) {
-    case 'https:':
-        port = 443;
-        protocol = 1;
-        break;
-    case 'http:':
-        port = 80;
-        protocol = 0;
-        break;
-    default:
-        console.log(urlProtocol, 'is not supported, using https: instead.');
-        protocol = 0;
-        port = 443;
+const handlers = {
+    http: './http/http-tester.js',
+    tcp: './tcp/tcp-tester.js'
 }
 
-if(portArg) port = portArg;
-if(urlParams.port) port = address.port;
-
-const set = new Set();
-
-const options = {
-    hostname: urlParams.hostname,
-    port,
-    path: urlParams.path,
-    method: 'GET',
-    timeout
-};
-
-const start = Date.now();
-const statuses = {last_response_time: 'waiting'};
-let counter = 0;
-
-function bombard() {
-    counter++;
-    const promise = benchmarkPromise(makeRequest, options, protocol, timeout, false);
-    set.add(promise);
-    promise.then(({data, time}) => {
-        const {status} = data;
-        const key = status || data.code;
-        statuses[key] = statuses[key] ? statuses[key] += 1 : 1;
-        statuses.last_response_time = time + 'ms';
-        set.delete(promise);
-        if ((Date.now() - start) / 1000 < workTime) return bombard();
-        if (set.size === 0) end();
-    })
-    if (set.size < concurrent && (Date.now() - start) / 1000 < workTime) bombard();
+const chooseProtocolAndPort = urlProtocol => {
+    switch(urlProtocol) {
+        case 'https:':
+            return { port: 443, protocol: 1}
+        case 'http:':
+            return { port: 80, protocol: 0}
+        default:
+            console.log(urlProtocol, 'is not supported, using https: instead.');
+            return { port: 443, protocol: 1}
+    }
 }
 
-function end() {
+const startTime = Date.now();
+let interval;
+let currentWorkingTime = 0;
+let currentPendingRequests = 0;
+let statuses = {};
+const workers = new Set();
+
+
+const start = () => {
+    const { a: address, p: portArg, c: concurrent, t: workTime, r, m: mode } = argv;
+    const timeout = r * 1000;
+
+    interval = setInterval(() => {
+        currentWorkingTime = (Date.now() - startTime) / 1000;
+        if(currentWorkingTime >= workTime) workers.forEach(worker => worker.postMessage('end'));
+        logProgress()
+    }, 500);
+
+    const handlerPath = handlers[mode];
+    if(!handlerPath) throw "unsupported requests mode. use tcp or http."
+
+    let port;
+    if(portArg) port = portArg;
+    const urlParams = url.parse(address);
+    if(urlParams.port) port = urlParams.port;
+    let res;
+
+    if(mode === 'http') {
+        res = chooseProtocolAndPort(urlParams.protocol);
+        if(!port) port = res.port;
+        console.log(`Starting to test ${urlParams.protocol}//${urlParams.hostname}:${port}${urlParams.path} during ${workTime}s in http mode.`);
+    }
+
+    if(mode === 'tcp') {
+        if(!port) throw "port is required for tcp mode."
+        console.log(`Starting to test ${address}:${port} during ${workTime}s in tcp mode.`);
+    }
+
+    const worker = new Worker(handlerPath, {
+        workerData: {
+            address, port, concurrent, timeout, urlParams, protocol: res?.protocol
+        }
+    });
+
+    workers.add(worker);
+
+    worker.on('message', data => {
+        const { status, pendingRequests, ended, totalRequests } = data;
+        if(ended) {
+            worker.terminate().then(() => {
+                workers.delete(worker);
+                if(!workers.length) end(totalRequests);
+            });
+            return;
+        }
+        statuses = status;
+        currentPendingRequests = pendingRequests;
+    });
+}
+
+const end = totalRequests => {
     clearInterval(interval);
     logProgress();
     delete statuses.last_response_time;
     console.log('\nended');
-    console.log('request sent:', counter);
+    console.log('request sent:', totalRequests);
     console.log(statuses);
     process.exit(0);
 }
 
-console.log(`Starting to test ${urlParams.protocol}//${urlParams.hostname}:${port}${urlParams.path} during ${workTime} s.`);
 
 const logProgress = () => {
     process.stdout.clearLine();
     process.stdout.cursorTo(0);
     process.stdout.write(
-        `Time: ${(Date.now() - start) / 1000} s, pending requests: ${set.size}, latest response time: ${statuses.last_response_time}`
+        `Time: ${currentWorkingTime} s, pending requests: ${currentPendingRequests}, latest response time: ${statuses?.last_response_time || 'loading'}`
     );
 }
 
 process.on('SIGINT', end);
 process.on('SIGTERM', end);
 
-const interval = setInterval(logProgress, 500);
-
-bombard();
-
+start();

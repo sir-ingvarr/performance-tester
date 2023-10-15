@@ -3,19 +3,26 @@ const {hideBin} = require("yargs/helpers");
 
 const argv = yargs(hideBin(process.argv))
     .options({
-        u: {
-            alias: 'url',
+        a: {
+            alias: 'address',
             demandOption: true,
             default: 'http://localhost',
             describe: 'url to query',
             type: 'string'
         },
+        m: {
+            alias: 'mode',
+            demandOption: true,
+            default: 'http',
+            describe: 'requests mode (http or tcp)',
+            type: 'string'
+        },
         p: {
             alias: 'port',
-            describe: 'port',
+            describe: 'port number, gets overrided by the port specified in url.',
             type: 'number'
         },
-        tm: {
+        r: {
             alias: 'timeout',
             describe: 'requests timeout before request is destroyed',
             type: 'number',
@@ -24,7 +31,7 @@ const argv = yargs(hideBin(process.argv))
         t: {
             alias: 'time',
             demandOption: true,
-            default: 60,
+            default: 10,
             describe: 'time in seconds to send requests',
             type: 'number'
         },
